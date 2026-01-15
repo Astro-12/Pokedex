@@ -78,39 +78,116 @@ def search_pokemon():
     ])
 
 def plot_avg_stats_by_type():
-    type_stats = pokedex.groupby("Type 1")[stats].mean()
+    print("\nAvailable Types:['Grass' 'Fire' 'Water' 'Bug' 'Normal' 'Poison' 'Electric' " \
+    "'Ground' 'Fairy' 'Fighting' 'Psychic' 'Rock' 'Ghost' 'Ice' 'Dragon' 'Dark' 'Steel''Flying']")
+    print(sorted(pokedex["Type 1"].unique()))
 
-    type_stats.plot(kind="bar", figsize=(12, 6))
-    plt.title("Average Pokémon Stats by Type")
-    plt.ylabel("Average Stat Value")
-    plt.xlabel("Type")
-    plt.xticks(rotation=45)
+    types_input = input(
+        "\nEnter types to compare (comma separated, e.g. Fire,Water): "
+    ).strip()
+
+    selected_types = [t.strip() for t in types_input.split(",")]
+
+    valid_types = pokedex["Type 1"].unique()
+    selected_types = [t for t in selected_types if t in valid_types]
+
+    if len(selected_types) < 2:
+        print("⚠️ Please select at least 2 valid types.")
+        return
+
+    print("\nAvailable Stats:", stats)
+    stats_input = input(
+        "Enter stats to compare (comma separated, e.g. Attack,Speed): "
+    ).strip()
+
+    selected_stats = [s.strip() for s in stats_input.split(",")]
+
+    selected_stats = [s for s in selected_stats if s in stats]
+
+    if not selected_stats:
+        print("⚠️ No valid stats selected.")
+        return
+
+    type_stats = (
+        pokedex[pokedex["Type 1"].isin(selected_types)]
+        .groupby("Type 1")[selected_stats]
+        .mean()
+    )
+
+    type_stats.plot(kind="bar", figsize=(10, 6))
+    plt.title("Average Stats Comparison by Type")
+    plt.ylabel("Average Value")
+    plt.xticks(rotation=0)
     plt.tight_layout()
     plt.show()
-#Comparing all the stats of all the types seems overwhelming,can be modified so that u can choose any 2 or more pokemons or types to compare the stats for 
+
 
 def plot_stat_distribution():
-    stat = input("Enter stat (HP, Attack, Defense, Speed): ").strip()
+    print("\nAvailable Stats:", stats)
+    stat = input("Enter stat to analyze: ").strip()
 
     if stat not in stats:
-        print("⚠️ Invalid stat name.")
+        print("⚠️ Invalid stat.")
+        return
+
+    names_input = input(
+        "Enter Pokémon names to compare (comma separated, e.g. Pikachu,Charizard): "
+    ).strip()
+
+    names = [n.strip() for n in names_input.split(",")]
+
+    selected = pokedex[pokedex["Name"].isin(names)]
+
+    if selected.empty:
+        print("⚠️ No valid Pokémon found.")
         return
 
     plt.figure(figsize=(8, 5))
-    plt.hist(pokedex[stat], bins=20)
-    plt.title(f"{stat} Distribution")
+
+    for name in selected["Name"]:
+        values = pokedex[pokedex["Name"] == name][stat]
+        plt.hist(
+            values,
+            bins=10,
+            alpha=0.6,
+            edgecolor="black",
+            label=name
+        )
+
+    plt.title(f"{stat} Distribution Comparison")
     plt.xlabel(stat)
-    plt.ylabel("Number of Pokémon")
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.tight_layout()
     plt.show()
 #The graphs can be modified(outline,different colors)basically make the graph more user friendly to understand and again more in-depht selection of what pokemons you wanna compare the stats for
 
 def plot_attack_vs_speed():
     plt.figure(figsize=(8, 6))
-    plt.scatter(pokedex["Attack"], pokedex["Speed"])
-    plt.title("Attack vs Speed")
+
+    plt.scatter(
+        pokedex["Attack"],
+        pokedex["Speed"],
+        alpha=0.7,
+        edgecolors="black"
+    )
+
+    plt.title("Attack vs Speed of Pokémon")
     plt.xlabel("Attack")
     plt.ylabel("Speed")
+
+    # Highlight fast Pokémon
+    fast = pokedex["Speed"] > 100
+    plt.scatter(
+        pokedex.loc[fast, "Attack"],
+        pokedex.loc[fast, "Speed"],
+        label="Fast Pokémon (Speed > 100)"
+    )
+
+    plt.legend()
+    plt.tight_layout()
     plt.show()
+
 #The dot color of speed and attack has to be changed.
 
 def menu():
@@ -119,7 +196,7 @@ def menu():
         print("1. Show Top 10 Pokémon (by Total Stats)")
         print("2. Show Average Stats by Type")
         print("3. Show Top 10 Pokémon (by Power Score)")
-        print("4. Search Pokémon by Name")
+        print("4. Search Pokémon by Name")  
         print("5. Plot Attack vs Speed")
         print("6. Plot Average Stats by Type")
         print("7. Plot Stat Distribution")
@@ -152,5 +229,8 @@ def menu():
             break
         else:
             print("⚠️ Invalid choice.")
+
+
+print()
 
 menu()
