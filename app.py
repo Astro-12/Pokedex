@@ -12,6 +12,8 @@ page = st.sidebar.radio(
 @st.cache_data
 def load_data():
     df = pd.read_csv("pokemon.csv")
+    df = df[~df["Name"].str.contains("Mega", case=False, na=False)]
+    df = df[~df["Name"].str.contains("Primal", case=False, na=False)]
     df["Type 2"] = df["Type 2"].fillna("None")
     df = df.drop(columns=["Total"])
 
