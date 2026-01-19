@@ -2,14 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 
 # --------------------------------------------------
 # PAGE CONFIG
 # --------------------------------------------------
-st.set_page_config(
-    page_title="Pokédex",
-    layout="wide"
-)
+st.set_page_config(page_title="Pokédex", layout="wide")
 
 # --------------------------------------------------
 # DATA LOADING & CLEANING
@@ -21,18 +19,22 @@ def load_data():
     # Remove Mega Evolutions
     df = df[~df["Name"].str.contains("Mega", case=False, na=False)]
 
-    # Clean data
     df["Type 2"] = df["Type 2"].fillna("None")
     df = df.drop(columns=["Total"])
 
-    # Ensure ID is numeric
-    df["#"] = pd.to_numeric(df["#"])
+    df["#"] = pd.to_numeric(df["#"])    
+
+    df = df.drop_duplicates(subset="#", keep="first")
 
     stats = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]
     df[stats] = df[stats].apply(pd.to_numeric)
 
-    # Feature engineering
+    # Total stats
     df["total_stats"] = df[stats].sum(axis=1)
+
+    # Power score
+    weights = np.array([1.0, 1.3, 1.2, 1.4, 1.3, 1.1])
+    df["power_score"] = df[stats].values @ weights
 
     return df, stats
 
@@ -43,22 +45,46 @@ pokedex, stats = load_data()
 # IMAGE HANDLER (ID BASED)
 # --------------------------------------------------
 def get_pokemon_image_by_id(pokemon_id):
-    image_path = f"images/{pokemon_id}.jpg"
-    if os.path.exists(image_path):
-        return image_path
-    else:
-        return "images/placeholder.jpg"
-
+    path = f"images/{pokemon_id}.jpg"
+    return path if os.path.exists(path) else None
 
 # --------------------------------------------------
-# SIDEBAR NAVIGATION
+# NORMALIZATION
+# --------------------------------------------------
+def normalize_stats(df, stat_cols):
+    return (df[stat_cols] - df[stat_cols].min()) / (
+        df[stat_cols].max() - df[stat_cols].min()
+    )
+
+# --------------------------------------------------
+# RADAR CHART
+# --------------------------------------------------
+def radar_chart(labels, values_a, values_b, label_a, label_b):
+    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
+    angles += angles[:1]
+
+    values_a = np.append(values_a, values_a[0])
+    values_b = np.append(values_b, values_b[0])
+
+    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+
+    ax.plot(angles, values_a, linewidth=2, label=label_a)
+    ax.fill(angles, values_a, alpha=0.25)
+
+    ax.plot(angles, values_b, linewidth=2, label=label_b)
+    ax.fill(angles, values_b, alpha=0.25)
+
+    ax.set_thetagrids(np.degrees(angles[:-1]), labels)
+    ax.set_title("Radar Stat Comparison", pad=20)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.4, 1.2))
+
+    return fig
+
+# --------------------------------------------------
+# SIDEBAR
 # --------------------------------------------------
 st.sidebar.title("🧭 Pokédex Menu")
-
-page = st.sidebar.radio(
-    "Choose a section:",
-    ["Search Pokémon", "Rankings", "Visualizations"]
-)
+page = st.sidebar.radio("Choose a section:", ["Search Pokémon", "Rankings","Compare"])
 
 # --------------------------------------------------
 # SEARCH PAGE
@@ -66,161 +92,136 @@ page = st.sidebar.radio(
 if page == "Search Pokémon":
     st.title("🔍 Search Pokémon")
 
-    # Step 1: Text input (user types here)
-    query = st.text_input(
-        "Start typing Pokémon name:",
-        placeholder="e.g. pika, char, bulba..."
-    )
+    query = st.text_input("Start typing Pokémon name:")
 
-    # Step 2: Filter Pokémon live
     if query:
-        filtered = pokedex[
-            pokedex["Name"].str.contains(query, case=False)
-        ]
+        filtered = pokedex[pokedex["Name"].str.contains(query, case=False)]
 
         if filtered.empty:
             st.warning("No Pokémon found.")
         else:
-            # Step 3: Dynamic dropdown (autocomplete feel)
-            selected = st.selectbox(
-                "Select Pokémon from suggestions:",
-                filtered["Name"].values
-            )
-
+            selected = st.selectbox("Select Pokémon:", filtered["Name"].values)
             pokemon = filtered[filtered["Name"] == selected].iloc[0]
-            pokemon_id = int(pokemon["#"])
+            pid = int(pokemon["#"])
 
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                image_path = get_pokemon_image_by_id(pokemon_id)
-                if image_path:
-                    st.image(image_path, width="stretch")
+                img = get_pokemon_image_by_id(pid)
+                if img:
+                    st.image(img, width="stretch")
                 else:
-                    st.warning("Image not available")
+                    st.info("No image")
 
             with col2:
                 st.subheader(pokemon["Name"])
-                st.write(f"**Pokédex ID:** {pokemon_id}")
-                st.write(f"**Type 1:** {pokemon['Type 1']}")
-                st.write(f"**Type 2:** {pokemon['Type 2']}")
+                st.write(f"Type 1: {pokemon['Type 1']}")
+                st.write(f"Type 2: {pokemon['Type 2']}")
 
-                st.markdown("### 📊 Stats")
-                st.dataframe(
-                    pokemon[
-                        ["HP", "Attack", "Defense",
-                         "Sp. Atk", "Sp. Def", "Speed",
-                         "total_stats"]
-                    ],
-                    use_container_width=True
-                )
+                with st.expander("📊 View stat radar"):
+                    radar_stats = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]
+                    fig = radar_chart(
+                        radar_stats,
+                        pokemon[radar_stats].values,
+                        pokemon[radar_stats].values,
+                        pokemon["Name"],
+                        pokemon["Name"]
+                    )
+                    st.pyplot(fig, use_container_width=False)
 
 # --------------------------------------------------
 # RANKINGS PAGE
 # --------------------------------------------------
-
 elif page == "Rankings":
     st.title("🏆 Pokémon Rankings")
 
-    ranking_metric = st.selectbox(
-        "Rank Pokémon by:",
+    metric = st.selectbox(
+        "Rank by:",
         ["Total Stats", "Attack", "Defense", "Speed", "Power Score"]
     )
 
-    sort_order = st.radio(
-        "Sort order:",
+    ascending = st.radio(
+        "Order:",
         ["Highest → Lowest", "Lowest → Highest"],
         horizontal=True
-    )
+    ) == "Lowest → Highest"
 
-    ascending = sort_order == "Lowest → Highest"
+    top_n = st.slider("How many Pokémon?", 5, 30, 10)
 
-    type_options = ["All"] + sorted(pokedex["Type 1"].unique().tolist())
-    selected_type = st.selectbox("Filter by Type:", type_options)
+    ranked = pokedex.copy()
 
-    top_n = st.slider(
-        "How many Pokémon to show?",
-        min_value=5,
-        max_value=50,
-        value=10
-    )
-
-    if ranking_metric == "Total Stats":
-        ranked = pokedex.sort_values("total_stats", ascending=ascending)
-        columns = ["#", "Name", "Type 1", "total_stats"]
-
-    elif ranking_metric == "Attack":
-        ranked = pokedex.sort_values("Attack", ascending=ascending)
-        columns = ["#", "Name", "Type 1", "Attack"]
-
-    elif ranking_metric == "Defense":
-        ranked = pokedex.sort_values("Defense", ascending=ascending)
-        columns = ["#", "Name", "Type 1", "Defense"]
-
-    elif ranking_metric == "Speed":
-        ranked = pokedex.sort_values("Speed", ascending=ascending)
-        columns = ["#", "Name", "Type 1", "Speed"]
-
-    elif ranking_metric == "Power Score":
-        ranked = pokedex.sort_values("power_score", ascending=ascending)
-        columns = ["#", "Name", "Type 1", "power_score"]
-
-    if selected_type != "All":
-        ranked = ranked[ranked["Type 1"] == selected_type]
-
-    def highlight_top_3(row):
-        if row.name < 3:
-            return ["background-color: #ffd700"] * len(row)
-        return [""] * len(row)
-
-    st.subheader(f"Top {top_n} Pokémon by {ranking_metric}")
+    if metric == "Total Stats":
+        ranked = ranked.sort_values("total_stats", ascending=ascending)
+        value_col = "total_stats"
+    elif metric == "Attack":
+        ranked = ranked.sort_values("Attack", ascending=ascending)
+        value_col = "Attack"
+    elif metric == "Defense":
+        ranked = ranked.sort_values("Defense", ascending=ascending)
+        value_col = "Defense"
+    elif metric == "Speed":
+        ranked = ranked.sort_values("Speed", ascending=ascending)
+        value_col = "Speed"
+    else:
+        ranked = ranked.sort_values("power_score", ascending=ascending)
+        value_col = "power_score"
 
     st.dataframe(
-        ranked[columns]
-        .head(top_n)
-        .style.apply(highlight_top_3, axis=1),
+        ranked[["#", "Name", "Type 1", value_col]].head(top_n),
         use_container_width=True
     )
 
-    selected_from_ranking = st.selectbox(
-        "View details for Pokémon:",
-        ranked["Name"].head(top_n).values
+    # --------------------------------------------------
+    # CARD GRID
+    # --------------------------------------------------
+    st.markdown("## 🧩 Top Pokémon Cards")
+
+    cards = ranked.head(top_n)
+    cols = st.columns(5)
+
+    for i, (_, row) in enumerate(cards.iterrows()):
+        with cols[i % 5]:
+            img = get_pokemon_image_by_id(int(row["#"]))
+            if img:
+                st.image(img, width="stretch")
+            st.markdown(f"**{row['Name']}**")
+            st.caption(row["Type 1"])
+
+    # --------------------------------------------------
+    # COMPARISON
+    # --------------------------------------------------
+    st.markdown("---")
+    st.subheader("📊 Compare Pokémon")
+
+    names = ranked["Name"].head(top_n).values
+
+    colA, colB = st.columns(2)
+    with colA:
+        p1 = st.selectbox("Pokémon A", names, key="a")
+    with colB:
+        p2 = st.selectbox("Pokémon B", names, key="b")
+
+    normalize = st.checkbox("⚖️ Normalize stats", value=True)
+
+    poke_a = pokedex[pokedex["Name"] == p1].iloc[0]
+    poke_b = pokedex[pokedex["Name"] == p2].iloc[0]
+
+    radar_stats = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]
+
+    if normalize:
+        norm = normalize_stats(pokedex, radar_stats)
+        vals_a = norm.loc[poke_a.name, radar_stats].values
+        vals_b = norm.loc[poke_b.name, radar_stats].values
+    else:
+        vals_a = poke_a[radar_stats].values
+        vals_b = poke_b[radar_stats].values
+
+    fig = radar_chart(
+        radar_stats,
+        vals_a,
+        vals_b,
+        poke_a["Name"],
+        poke_b["Name"]
     )
 
-    pokemon = pokedex[pokedex["Name"] == selected_from_ranking].iloc[0]
-    pokemon_id = int(pokemon["#"])
-
-    st.markdown("---")
-    st.subheader("🔍 Pokémon Details")
-
-    col1, col2 = st.columns([1, 2])
-
-    with col1:
-        image_path = get_pokemon_image_by_id(pokemon_id)
-        if image_path:
-            st.image(image_path, width="stretch")
-        else:
-            st.warning("Image not available")
-
-    with col2:
-        st.write(f"**Pokédex ID:** {pokemon_id}")
-        st.write(f"**Type 1:** {pokemon['Type 1']}")
-        st.write(f"**Type 2:** {pokemon['Type 2']}")
-
-        st.markdown("### 📊 Stats")
-        st.dataframe(
-            pokemon[
-                ["HP", "Attack", "Defense",
-                 "Sp. Atk", "Sp. Def", "Speed",
-                 "total_stats", "power_score"]
-            ],
-            use_container_width=True
-        )
-
-
-# --------------------------------------------------
-# VISUALIZATIONS PAGE (PLACEHOLDER FOR NOW)
-# --------------------------------------------------
-elif page == "Visualizations":
-    st.title("📊 Pokémon Visualizations")
-    st.info("Visualizations will be added next 👀")
+    st.pyplot(fig, use_container_width=False)
