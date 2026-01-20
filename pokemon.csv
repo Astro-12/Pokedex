@@ -710,8 +710,8 @@
 645,LandorusIncarnate Forme,Ground,Flying,600,89,125,90,115,80,101,5,True
 645,LandorusTherian Forme,Ground,Flying,600,89,145,90,105,80,91,5,True
 646,Kyurem,Dragon,Ice,660,125,130,90,130,90,95,5,True
-646,KyuremBlack Kyurem,Dragon,Ice,700,125,170,100,120,90,95,5,True
-646,KyuremWhite Kyurem,Dragon,Ice,700,125,120,90,170,100,95,5,True
+646,Black Kyurem,Dragon,Ice,700,125,170,100,120,90,95,5,True
+646,White Kyurem,Dragon,Ice,700,125,120,90,170,100,95,5,True
 647,KeldeoOrdinary Forme,Water,Fighting,580,91,72,90,129,90,108,5,False
 647,KeldeoResolute Forme,Water,Fighting,580,91,72,90,129,90,108,5,False
 648,MeloettaAria Forme,Normal,Psychic,600,100,77,77,128,128,90,5,False

@@ -4,224 +4,364 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 
-# --------------------------------------------------
+# ==================================================
 # PAGE CONFIG
-# --------------------------------------------------
-st.set_page_config(page_title="Pokédex", layout="wide")
+# ==================================================
+st.set_page_config(
+    page_title="Pokédex",
+    layout="wide"
+)
 
-# --------------------------------------------------
-# DATA LOADING & CLEANING
-# --------------------------------------------------
+# ==================================================
+# DATA LOADING
+# ==================================================
 @st.cache_data
 def load_data():
-    df = pd.read_csv("pokemon.csv")
+    """
+    Loads the cleaned Pokémon dataset.
 
-    # Remove Mega Evolutions
-    df = df[~df["Name"].str.contains("Mega", case=False, na=False)]
+    REQUIRED CSV COLUMNS:
+    - #
+    - Name
+    - base_name   -> canonical Pokémon name (e.g. Charizard)
+    - form        -> 'base', 'Mega Charizard X', 'Normal Forme', etc.
 
+    IMPORTANT:
+    We NEVER infer forms from Name.
+    The CSV decides everything.
+    """
+
+    df = pd.read_csv("pokemon_cleaned.csv")
+
+    # Safety cleaning
     df["Type 2"] = df["Type 2"].fillna("None")
-    df = df.drop(columns=["Total"])
+    df["base_name"] = df["base_name"].fillna("")
+    df["form"] = df["form"].fillna("base")
 
-    df["#"] = pd.to_numeric(df["#"])    
-
-    df = df.drop_duplicates(subset="#", keep="first")
+    df["#"] = pd.to_numeric(df["#"], errors="coerce")
 
     stats = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]
-    df[stats] = df[stats].apply(pd.to_numeric)
+    df[stats] = df[stats].apply(pd.to_numeric, errors="coerce")
 
-    # Total stats
+    # Derived stats
     df["total_stats"] = df[stats].sum(axis=1)
 
-    # Power score
     weights = np.array([1.0, 1.3, 1.2, 1.4, 1.3, 1.1])
     df["power_score"] = df[stats].values @ weights
 
-    return df, stats
+    # Base Pokémon only (used when toggle is OFF)
+    base_df = df[
+    (df["form"] == "base") &
+    (df["Name"] == df["base_name"]) &
+    (df["image_file"] == df["#"].astype(int).astype(str) + ".jpg")
+].copy()
+
+    return base_df, df, stats
+
+def comparison_bar_chart(stats, df):
+    """
+    Grouped bar chart for multiple Pokémon comparison
+    """
+    fig, ax = plt.subplots(figsize=(5, 4))
+
+    x = np.arange(len(stats))
+    width = 0.8 / len(df)
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        ax.bar(
+            x + i * width,
+            row[stats].values,
+            width,
+            label=row["Name"]
+        )
+
+    ax.set_xticks(x + width * (len(df) - 1) / 2)
+    ax.set_xticklabels(stats, rotation=45, ha="right")
+    ax.set_ylabel("Stat Value")
+    ax.set_title("Stat Comparison (Bar Chart)")
+    ax.legend(fontsize=8)
+
+    return fig
+base_df, full_df, STATS = load_data()
+
+# ==================================================
+# FORM NORMALIZATION (CRITICAL)
+# ==================================================
+def normalize_form_for_image(form: str) -> str:
+    """
+    Converts CSV form names into image-safe filenames.
+
+    Examples:
+    - 'Normal Forme' -> 'normal'
+    - 'Attack Forme' -> 'attack'
+    - 'Mega Charizard X' -> 'mega-x'
+    - 'Therian Forme' -> 'therian'
+    """
+
+    if form == "base":
+        return "base"
+
+    form = form.lower()
+    form = form.replace("forme", "")
+    form = form.replace("form", "")
+    form = form.replace("mega", "mega")
+    form = form.strip()
+
+    replacements = {
+    # Deoxys
+    "normal": "normal",
+    "attack": "attack",
+    "defense": "defense",
+    "speed": "speed",
+
+    # Forces of Nature
+    "therian": "therian",
+    "incarnate": "incarnate",
+
+    # Shaymin
+    "land": "land",
+    "sky": "sky",
+
+    # Kyurem
+    "black": "black",
+    "white": "white",
+
+    # Mega
+    "mega x": "mega-x",
+    "mega y": "mega-y",
+    "x": "mega-x",
+    "y": "mega-y"
+}
+
+    for key, val in replacements.items():
+        if key in form:
+            return val
+
+    return form.replace(" ", "-")
 
 
-pokedex, stats = load_data()
+# ==================================================
+# IMAGE HANDLER
+# ==================================================
+def get_pokemon_image(pokemon_id, form):
+    """
+    Universal image resolver.
 
-# --------------------------------------------------
-# IMAGE HANDLER (ID BASED)
-# --------------------------------------------------
-def get_pokemon_image_by_id(pokemon_id):
-    path = f"images/{pokemon_id}.jpg"
-    return path if os.path.exists(path) else None
+    Rules:
+    - Base: images/{id}.jpg
+    - Form: images/{id}-{normalized_form}.jpg
+    """
 
-# --------------------------------------------------
-# NORMALIZATION
-# --------------------------------------------------
-def normalize_stats(df, stat_cols):
-    return (df[stat_cols] - df[stat_cols].min()) / (
-        df[stat_cols].max() - df[stat_cols].min()
+    if form != "base":
+        form_slug = normalize_form_for_image(form)
+        form_path = f"images/{pokemon_id}-{form_slug}.jpg"
+        if os.path.exists(form_path):
+            return form_path
+
+    base_path = f"images/{pokemon_id}.jpg"
+    if os.path.exists(base_path):
+        return base_path
+
+    return "images/placeholder.jpg"
+
+
+# ==================================================
+# VISUALIZATION FUNCTIONS
+# ==================================================
+def radar_chart(labels, values_list, names):
+    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False)
+    angles = np.append(angles, angles[0])
+
+    # SMALLER FIGURE
+    fig, ax = plt.subplots(
+        figsize=(3, 3),   # 👈 key change
+        subplot_kw=dict(polar=True)
     )
 
-# --------------------------------------------------
-# RADAR CHART
-# --------------------------------------------------
-def radar_chart(labels, values_a, values_b, label_a, label_b):
-    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
-    angles += angles[:1]
-
-    values_a = np.append(values_a, values_a[0])
-    values_b = np.append(values_b, values_b[0])
-
-    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-
-    ax.plot(angles, values_a, linewidth=2, label=label_a)
-    ax.fill(angles, values_a, alpha=0.25)
-
-    ax.plot(angles, values_b, linewidth=2, label=label_b)
-    ax.fill(angles, values_b, alpha=0.25)
+    for values, name in zip(values_list, names):
+        values = np.append(values, values[0])
+        ax.plot(angles, values, linewidth=2, label=name)
+        ax.fill(angles, values, alpha=0.15)
 
     ax.set_thetagrids(np.degrees(angles[:-1]), labels)
-    ax.set_title("Radar Stat Comparison", pad=20)
-    ax.legend(loc="upper right", bbox_to_anchor=(1.4, 1.2))
+    ax.set_title("Stat Radar", fontsize=12)
+    ax.tick_params(labelsize=9)
+
+    ax.legend(
+        loc="upper right",
+        bbox_to_anchor=(1.25, 1.15),
+        fontsize=8
+    )
 
     return fig
 
-# --------------------------------------------------
-# SIDEBAR
-# --------------------------------------------------
+
+
+def bar_chart(stats, values, name):
+    """Simple bar chart"""
+
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.bar(stats, values)
+    ax.set_title(name)
+    ax.set_ylabel("Stat Value")
+    ax.set_xticks(range(len(stats)))
+    ax.set_xticklabels(stats, rotation=45, ha="right")
+
+    return fig
+
+
+# ==================================================
+# SIDEBAR NAVIGATION
+# ==================================================
 st.sidebar.title("🧭 Pokédex Menu")
-page = st.sidebar.radio("Choose a section:", ["Search Pokémon", "Rankings","Compare"])
 
-# --------------------------------------------------
-# SEARCH PAGE
-# --------------------------------------------------
+page = st.sidebar.radio(
+    "Navigate",
+    ["Search Pokémon", "Rankings", "Pokémon Comparison"]
+)
+
+# ==================================================
+# SEARCH POKÉMON PAGE
+# ==================================================
 if page == "Search Pokémon":
-    st.title("🔍 Search Pokémon")
+    st.title("Search Pokémon")
 
-    query = st.text_input("Start typing Pokémon name:")
+    include_forms = st.toggle("Include Mega / Alternate Forms")
+
+    # IMPORTANT:
+    # When toggle is OFF → ONLY base_df
+    # When toggle is ON  → full_df
+    data = full_df if include_forms else base_df
+
+    query = st.text_input("Start typing Pokémon name")
 
     if query:
-        filtered = pokedex[pokedex["Name"].str.contains(query, case=False)]
+        filtered = data[
+            data["base_name"].str.contains(query, case=False, na=False)
+        ]
 
-        if filtered.empty:
-            st.warning("No Pokémon found.")
-        else:
-            selected = st.selectbox("Select Pokémon:", filtered["Name"].values)
-            pokemon = filtered[filtered["Name"] == selected].iloc[0]
-            pid = int(pokemon["#"])
+        if not filtered.empty:
+            selected_base = st.selectbox(
+                "Select Pokémon",
+                sorted(filtered["base_name"].unique())
+            )
 
-            col1, col2 = st.columns([1, 2])
+            # FORMS LOGIC (THIS FIXES YOUR BUG)
+            if include_forms:
+                pokemon_rows = full_df[full_df["base_name"] == selected_base]
+            else:
+                pokemon_rows = base_df[base_df["base_name"] == selected_base]
 
-            with col1:
-                img = get_pokemon_image_by_id(pid)
-                if img:
-                    st.image(img, width="stretch")
-                else:
-                    st.info("No image")
+            chart_type = st.selectbox(
+                "Stat Visualization Type",
+                ["Radar Chart", "Bar Chart"]
+            )
 
-            with col2:
-                st.subheader(pokemon["Name"])
-                st.write(f"Type 1: {pokemon['Type 1']}")
-                st.write(f"Type 2: {pokemon['Type 2']}")
+            cols = st.columns(len(pokemon_rows))
 
-                with st.expander("📊 View stat radar"):
-                    radar_stats = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]
-                    fig = radar_chart(
-                        radar_stats,
-                        pokemon[radar_stats].values,
-                        pokemon[radar_stats].values,
-                        pokemon["Name"],
-                        pokemon["Name"]
+            for col, (_, row) in zip(cols, pokemon_rows.iterrows()):
+                with col:
+                    img = get_pokemon_image(row["#"], row["form"])
+                    st.image(img, width=140)
+
+                    st.markdown(f"**{row['Name']}**")
+
+                    st.dataframe(
+                        row[STATS + ["total_stats", "power_score"]]
+                        .to_frame(name="Value"),
+                        use_container_width=True
                     )
-                    st.pyplot(fig, use_container_width=False)
 
-# --------------------------------------------------
+                    with st.expander("📊 Stat Visualization"):
+                        if chart_type == "Radar Chart":
+                            fig = radar_chart(
+                                STATS,
+                                [row[STATS].values],
+                                [row["Name"]]
+                            )
+                        else:
+                            fig = bar_chart(
+                                STATS,
+                                row[STATS].values,
+                                row["Name"]
+                            )
+
+                        # center the figure
+                        c1, c2, c3 = st.columns([1, 2, 1])
+                        with c2:
+                            st.pyplot(fig, use_container_width=False)
+# ==================================================
 # RANKINGS PAGE
-# --------------------------------------------------
+# ==================================================
 elif page == "Rankings":
-    st.title("🏆 Pokémon Rankings")
+    st.title("Pokémon Rankings")
 
     metric = st.selectbox(
-        "Rank by:",
-        ["Total Stats", "Attack", "Defense", "Speed", "Power Score"]
+        "Rank by",
+        ["total_stats", "Attack", "Defense", "Speed", "power_score"]
     )
 
     ascending = st.radio(
-        "Order:",
+        "Order",
         ["Highest → Lowest", "Lowest → Highest"],
         horizontal=True
     ) == "Lowest → Highest"
 
-    top_n = st.slider("How many Pokémon?", 5, 30, 10)
+    top_n = st.slider("Top N Pokémon", 5, 50, 10)
 
-    ranked = pokedex.copy()
-
-    if metric == "Total Stats":
-        ranked = ranked.sort_values("total_stats", ascending=ascending)
-        value_col = "total_stats"
-    elif metric == "Attack":
-        ranked = ranked.sort_values("Attack", ascending=ascending)
-        value_col = "Attack"
-    elif metric == "Defense":
-        ranked = ranked.sort_values("Defense", ascending=ascending)
-        value_col = "Defense"
-    elif metric == "Speed":
-        ranked = ranked.sort_values("Speed", ascending=ascending)
-        value_col = "Speed"
-    else:
-        ranked = ranked.sort_values("power_score", ascending=ascending)
-        value_col = "power_score"
+    ranked = base_df.sort_values(metric, ascending=ascending)
 
     st.dataframe(
-        ranked[["#", "Name", "Type 1", value_col]].head(top_n),
+        ranked[["#", "Name", "Type 1", metric]].head(top_n),
         use_container_width=True
     )
 
-    # --------------------------------------------------
-    # CARD GRID
-    # --------------------------------------------------
-    st.markdown("## 🧩 Top Pokémon Cards")
+    st.subheader("Top Pokémon Cards")
 
-    cards = ranked.head(top_n)
     cols = st.columns(5)
-
-    for i, (_, row) in enumerate(cards.iterrows()):
+    for i, (_, row) in enumerate(ranked.head(top_n).iterrows()):
         with cols[i % 5]:
-            img = get_pokemon_image_by_id(int(row["#"]))
-            if img:
-                st.image(img, width="stretch")
+            img = get_pokemon_image(row["#"], "base")
+            st.image(img, width=120)
             st.markdown(f"**{row['Name']}**")
             st.caption(row["Type 1"])
 
-    # --------------------------------------------------
-    # COMPARISON
-    # --------------------------------------------------
-    st.markdown("---")
-    st.subheader("📊 Compare Pokémon")
+# ==================================================
+# POKÉMON COMPARISON PAGE
+# ==================================================
+elif page == "Pokémon Comparison":
+    st.title("Pokémon Comparison")
 
-    names = ranked["Name"].head(top_n).values
+    count = st.slider("Number of Pokémon", 2, 5, 2)
 
-    colA, colB = st.columns(2)
-    with colA:
-        p1 = st.selectbox("Pokémon A", names, key="a")
-    with colB:
-        p2 = st.selectbox("Pokémon B", names, key="b")
+    selected = []
+    for i in range(count):
+        name = st.selectbox(
+            f"Pokémon {i+1}",
+            sorted(base_df["base_name"].unique()),
+            key=f"cmp_{i}"
+        )
+        selected.append(name)
 
-    normalize = st.checkbox("⚖️ Normalize stats", value=True)
+    compare_df = base_df[base_df["base_name"].isin(selected)]
 
-    poke_a = pokedex[pokedex["Name"] == p1].iloc[0]
-    poke_b = pokedex[pokedex["Name"] == p2].iloc[0]
-
-    radar_stats = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"]
-
-    if normalize:
-        norm = normalize_stats(pokedex, radar_stats)
-        vals_a = norm.loc[poke_a.name, radar_stats].values
-        vals_b = norm.loc[poke_b.name, radar_stats].values
-    else:
-        vals_a = poke_a[radar_stats].values
-        vals_b = poke_b[radar_stats].values
-
-    fig = radar_chart(
-        radar_stats,
-        vals_a,
-        vals_b,
-        poke_a["Name"],
-        poke_b["Name"]
+    st.subheader("Stat Table")
+    st.dataframe(
+        compare_df.set_index("Name")[STATS],
+        use_container_width=True
     )
 
-    st.pyplot(fig, use_container_width=False)
+    if st.checkbox("Show Visual Comparison"):
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            fig_radar = radar_chart(
+                STATS,
+                [row[STATS].values for _, row in compare_df.iterrows()],
+                compare_df["Name"].tolist()
+            )
+            st.pyplot(fig_radar, use_container_width=False)
+
+        with col2:
+            fig_bar = comparison_bar_chart(STATS, compare_df)
+            st.pyplot(fig_bar, use_container_width=False)
